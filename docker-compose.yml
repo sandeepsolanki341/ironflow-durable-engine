@@ -1,0 +1,81 @@
+# =============================================================================================
+# IronFlow — zero-infrastructure stack. `docker compose up` brings up the entire system:
+# PostgreSQL 16 (tuned for high-concurrency leasing), the Spring Boot engine (which runs Flyway
+# migrations on startup), and the React dashboard served by Nginx.
+#
+# The only external dependency is Docker itself. No message broker, no Redis, no separate
+# scheduler — the whole point of the engine is that Postgres is the only moving part.
+# =============================================================================================
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ironflow-postgres
+    environment:
+      POSTGRES_USER: ironflow
+      POSTGRES_PASSWORD: ironflow
+      POSTGRES_DB: ironflow
+      # Data checksums catch silent corruption — cheap insurance for the source of truth.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    # Load the tuned config. -c config_file points Postgres at our file rather than the default.
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - ./docker/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      # Engine startup waits on this; without it the engine races Postgres and Flyway fails to
+      # connect on a cold `up`.
+      test: ["CMD-SHELL", "pg_isready -U ironflow -d ironflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ironflow-engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      IRONFLOW_DB_URL: jdbc:postgresql://postgres:5432/ironflow
+      IRONFLOW_DB_USER: ironflow
+      IRONFLOW_DB_PASSWORD: ironflow
+      # Pool sized above the worker concurrency (64) headroom for a single-replica load test.
+      # The logical-lease design holds connections only per-statement, so this is plenty.
+      IRONFLOW_DB_POOL: "50"
+      # Single replica owns all timer shards.
+      IRONFLOW_REPLICA_INDEX: "0"
+      IRONFLOW_REPLICA_COUNT: "1"
+      # Enable the benchmark workflow + no-op activities so the k6 load test has something to
+      # drive. A real deployment omits this (defaults to false).
+      IRONFLOW_BENCHMARK_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: ironflow-dashboard
+    depends_on:
+      engine:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
