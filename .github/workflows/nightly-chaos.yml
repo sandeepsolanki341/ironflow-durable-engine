@@ -1,0 +1,170 @@
+# =============================================================================================
+# IronFlow nightly chaos test.
+#
+# Proves failure-proof correctness by construction: flood an ephemeral cluster with 10,000
+# multi-step workflows, hard-kill random workers every 30s while inducing network partitions,
+# let everything settle, then assert three invariants in SQL. Publishes a chaos: passing badge.
+#
+# The badge and the build status cannot disagree: the verification script exits non-zero on any
+# violation, which fails the job, which flips the badge to red on the next publish.
+# =============================================================================================
+name: nightly-chaos
+
+on:
+  schedule:
+    # 00:00 UTC every day. GitHub cron is UTC and best-effort (may lag under load).
+    - cron: "0 0 * * *"
+  # Allow manual runs for debugging, with a knob for a shorter smoke run.
+  workflow_dispatch:
+    inputs:
+      total_workflows:
+        description: "How many workflows to flood"
+        default: "10000"
+      chaos_duration:
+        description: "Chaos injection duration (seconds)"
+        default: "300"
+
+permissions:
+  contents: write   # needed to push the badge JSON to the badges branch
+
+concurrency:
+  # A new nightly run supersedes an in-flight one rather than stacking ephemeral clusters.
+  group: nightly-chaos
+  cancel-in-progress: true
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      TOTAL_WORKFLOWS: ${{ github.event.inputs.total_workflows || '10000' }}
+      CHAOS_DURATION: ${{ github.event.inputs.chaos_duration || '300' }}
+      CHAOS_INTERVAL: "30"
+      ENGINE_REPLICAS: "3"
+      COMPOSE_CMD: "docker compose"
+      BASE_URL: "http://localhost:8080"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          curl -sL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz \
+            | tar xz
+          sudo mv k6-v0.54.0-linux-amd64/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Build and start ephemeral cluster (3 engine replicas)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.chaos.yml \
+            up -d --build --scale engine=${ENGINE_REPLICAS}
+          echo "Waiting for the engine to become healthy…"
+          # Wait for the API to answer health before flooding. Fail fast if it never comes up.
+          for i in $(seq 1 60); do
+            if curl -sf "${BASE_URL}/actuator/health" | grep -q '"status":"UP"'; then
+              echo "engine healthy after ${i}0s"; break
+            fi
+            sleep 10
+            if [ "$i" -eq 60 ]; then echo "engine never became healthy"; docker compose logs engine; exit 1; fi
+          done
+
+      - name: Launch load generator (10,000 workflows) in the background
+        run: |
+          # Run the flood detached so the chaos monkey can run concurrently. Capture its output.
+          nohup k6 run \
+            -e BASE_URL=${BASE_URL} \
+            -e TOTAL_WORKFLOWS=${TOTAL_WORKFLOWS} \
+            .github/chaos/chaos-load.js > k6-load.log 2>&1 &
+          echo "LOAD_PID=$!" >> "$GITHUB_ENV"
+          echo "Load generator launched (pid $!)"
+
+      - name: Unleash the Chaos Monkey (kill -9 every 30s + network partitions)
+        run: |
+          # Runs for CHAOS_DURATION, killing a random replica and partitioning another each cycle.
+          CHAOS_INTERVAL=${CHAOS_INTERVAL} \
+          CHAOS_DURATION=${CHAOS_DURATION} \
+          ENGINE_SERVICE=engine \
+          ENGINE_REPLICAS=${ENGINE_REPLICAS} \
+          COMPOSE_CMD="docker compose -f docker-compose.yml -f docker-compose.chaos.yml" \
+          bash .github/chaos/chaos-monkey.sh
+
+      - name: Wait for the load generator to finish submitting
+        run: |
+          # The flood may still be submitting after chaos ends; wait for it, bounded.
+          if [ -n "${LOAD_PID:-}" ]; then
+            for i in $(seq 1 60); do
+              if ! kill -0 "${LOAD_PID}" 2>/dev/null; then echo "load done"; break; fi
+              sleep 10
+            done
+          fi
+          cat k6-load.log || true
+
+      - name: Let the cluster drain and settle
+        run: |
+          # With chaos over and a full healthy replica set, give the engine time to replay every
+          # crashed workflow to a terminal state. Poll until the live-execution count hits zero
+          # or a generous ceiling elapses. "Settled" is the precondition for the invariant that
+          # says nothing is left RUNNING.
+          for i in $(seq 1 60); do
+            LIVE=$(docker compose exec -T postgres psql -U ironflow -d ironflow -At -c \
+              "SELECT count(*) FROM wf_executions WHERE status IN ('RUNNING','COMPENSATING','DIVERGENT');")
+            echo "live executions: ${LIVE}"
+            if [ "${LIVE}" = "0" ]; then echo "fully settled"; break; fi
+            sleep 10
+          done
+
+      - name: Verify invariants (the proof)
+        id: verify
+        run: |
+          # Copy the SQL and script into the postgres container's reach via psql over the network.
+          export PGHOST=localhost PGPORT=5432 PGUSER=ironflow PGDATABASE=ironflow PGPASSWORD=ironflow
+          # psql runs on the runner against the mapped 5432 port.
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          OUT_DIR="$PWD" SQL_FILE=".github/chaos/verify-invariants.sql" \
+            bash .github/chaos/verify-and-report.sh
+          echo "badge=$(cat chaos-badge.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## IronFlow chaos verification"
+            echo '```json'
+            cat chaos-summary.json 2>/dev/null || echo "{ \"error\": \"no summary produced\" }"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.chaos.yml logs --no-color > cluster-logs.txt 2>&1 || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-results
+          path: |
+            chaos-summary.json
+            chaos-badge.json
+            k6-load.log
+            cluster-logs.txt
+          if-no-files-found: ignore
+
+      # Publish the badge JSON to a dedicated branch that shields.io reads via its endpoint API.
+      # Only on the scheduled run and only from the default branch, so a PR cannot move the badge.
+      - name: Publish badge
+        if: always() && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
+          publish_branch: badges
+          keep_files: true
+          # Only the badge file needs to land on the badges branch.
+          exclude_assets: ""
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.chaos.yml down -v || true
