@@ -31,10 +31,10 @@ public class BenchmarkComponents {
         return new BenchmarkWorkflow();
     }
 
-    @Bean
-    public BenchmarkActivities benchmarkActivities() {
-        return new BenchmarkActivities();
-    }
+    //@Bean
+    //public BenchmarkActivities benchmarkActivities() {
+      //  return new BenchmarkActivities();
+    //}
 
     /**
      * The no-op activity implementations. Each returns its input unchanged; the value is

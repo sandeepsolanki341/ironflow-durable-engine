@@ -134,7 +134,7 @@ public class PostgresTaskQueueRepository {
         INSERT INTO wf_tasks
             (execution_id, shard, task_queue, kind, status, scheduled_event_seq,
              not_before, payload, max_attempts)
-        VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'PENDING', ?, CAST(? AS timestamptz), ?, ?)
         ON CONFLICT DO NOTHING
         """;
 

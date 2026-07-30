@@ -35,7 +35,7 @@ public final class WorkflowFuture<T> {
     private final long commandSeq;
 
     /** Package-private: only {@link WorkflowContext} implementations construct these. */
-    WorkflowFuture(String activityType, Class<T> resultType, long commandSeq) {
+    public WorkflowFuture(String activityType, Class<T> resultType, long commandSeq) {
         this.activityType = Objects.requireNonNull(activityType, "activityType");
         this.resultType = Objects.requireNonNull(resultType, "resultType");
         this.commandSeq = commandSeq;
@@ -45,11 +45,11 @@ public final class WorkflowFuture<T> {
         return activityType;
     }
 
-    Class<T> resultType() {
+    public Class<T> resultType() {
         return resultType;
     }
 
-    long commandSeq() {
+    public long commandSeq() {
         return commandSeq;
     }
 
