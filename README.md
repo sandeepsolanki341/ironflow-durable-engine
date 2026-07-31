@@ -1,7 +1,7 @@
 # IronFlow
 
 <!-- Replace OWNER/REPO after pushing, so the badge resolves against your fork. -->
-[![chaos](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badges/chaos-badge.json)](../../actions/workflows/nightly-chaos.yml)
+[![chaos](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/sandeepsolanki341/ironflow-durable-engine/badges/chaos-badge.json)](../../actions/workflows/nightly-chaos.yml)
 
 **A durable execution engine backed entirely by PostgreSQL. No Kafka. No Redis. No broker.**
 
