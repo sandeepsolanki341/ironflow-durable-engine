@@ -1,0 +1,106 @@
+spring:
+  application:
+    name: ironflow
+
+  datasource:
+    url: ${IRONFLOW_DB_URL:jdbc:postgresql://localhost:5432/ironflow}
+    username: ${IRONFLOW_DB_USER:ironflow}
+    password: ${IRONFLOW_DB_PASSWORD:ironflow}
+    hikari:
+      # Sized for the worker's concurrency plus API traffic plus the reaper. The
+      # logical-lease design means connections are held only for the duration of a
+      # statement, never for the duration of a workflow, so this stays modest even with
+      # thousands of in-flight workflows.
+      maximum-pool-size: ${IRONFLOW_DB_POOL:30}
+      pool-name: ironflow-pool
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Fail rather than silently baseline: an unmigrated production database should stop
+    # startup, not proceed against a schema the code does not expect.
+    baseline-on-migrate: false
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Never let Hibernate touch DDL - a stray ddl-auto would
+      # silently drop the partial indexes and triggers the engine's guarantees rest on.
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  jooq:
+    sql-dialect: postgres
+
+  threads:
+    virtual:
+      enabled: true
+
+ironflow:
+  worker:
+    enabled: true
+    task-queue: default
+    max-concurrency: 64
+    lease-seconds: 30
+    # Max time a task waits if its notification is lost. Do NOT set to zero.
+    safety-net-interval: 30s
+  reaper:
+    interval-ms: 5000
+    initial-delay-ms: 5000
+    batch-size: 500
+    max-rounds-per-sweep: 20
+    base-backoff: 1s
+    max-backoff: 5m
+
+  # ---------------------------------------------------------------------------------
+  # LISTEN/NOTIFY dispatch.
+  # ---------------------------------------------------------------------------------
+  notify:
+    # Disabling falls back to safety-net polling only: correct, just slower.
+    enabled: true
+
+  # ---------------------------------------------------------------------------------
+  # Durable timers.
+  #
+  # replica-index and replica-count MUST be injected per pod. A StatefulSet gives this
+  # for free (the pod ordinal is the index); a Deployment does not.
+  #
+  # Set replica-count to the MINIMUM replica count you will ever run. Over-coverage is
+  # free - SKIP LOCKED makes an overlapping shard merely wasteful. Under-coverage is a
+  # silent outage in which an unowned shard's timers never fire, with no error anywhere.
+  # ---------------------------------------------------------------------------------
+  timer:
+    enabled: true
+    replica-index: ${IRONFLOW_REPLICA_INDEX:0}
+    replica-count: ${IRONFLOW_REPLICA_COUNT:1}
+    batch-size: 200
+    min-poll-interval: 200ms
+    max-poll-interval: 1s
+    error-backoff: 5s
+
+  # ---------------------------------------------------------------------------------
+  # Replay.
+  # ---------------------------------------------------------------------------------
+  replay:
+    # Guards against an infinite loop in workflow code pinning a worker slot forever.
+    decision-timeout: 30s
+
+  # ---------------------------------------------------------------------------------
+  # Buffered signal retention.
+  # ---------------------------------------------------------------------------------
+  signals:
+    purge-interval-ms: 3600000
+    purge-initial-delay-ms: 60000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    io.ironflow: INFO

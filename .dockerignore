@@ -1,0 +1,9 @@
+# Engine build context: exclude everything not needed for the Maven build.
+target/
+dashboard/
+load-test/
+.git/
+*.md
+.idea/
+.vscode/
+docker/

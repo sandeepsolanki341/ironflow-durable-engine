@@ -1,0 +1,27 @@
+# Test overrides. Datasource properties come from @DynamicPropertySource in each IT.
+spring:
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+ironflow:
+  worker:
+    # Most persistence/queue ITs drive the queue directly and must not race a live
+    # poller. The end-to-end suite re-enables this explicitly.
+    enabled: false
+    max-concurrency: 16
+    lease-seconds: 30
+  reaper:
+    # Effectively disabled: tests call reclaimBatch() directly so sweep timing is
+    # deterministic rather than dependent on a background thread firing at the right
+    # moment.
+    initial-delay-ms: 86400000
+    base-backoff: 1s
+    max-backoff: 5m
+
+logging:
+  level:
+    io.ironflow: DEBUG
+    org.testcontainers: WARN

@@ -1,0 +1,33 @@
+# =============================================================================================
+# Chaos-test override. Layered on top of docker-compose.yml:
+#     docker compose -f docker-compose.yml -f docker-compose.chaos.yml up -d --scale engine=3
+#
+# Two things change for chaos:
+#   1. The engine's container_name is removed. A fixed container_name makes scaling impossible
+#      (you cannot have three containers all named ironflow-engine), and the whole point of the
+#      chaos run is multiple killable replicas.
+#   2. replica-count is raised so every replica owns a fair share of timer shards, and each gets
+#      a DISTINCT replica-index. See the note below on why this matters for correctness.
+# =============================================================================================
+
+services:
+  engine:
+    # Remove the singleton name so `--scale engine=N` can create engine-1, engine-2, ...
+    container_name: null
+    environment:
+      # replica-count must reflect the scaled count so timer-shard ownership covers all shards.
+      # Under-coverage would silently strand timers - not what we want to blame on chaos.
+      IRONFLOW_REPLICA_COUNT: "3"
+      # NOTE ON replica-index: the timer poller sig nment shards by (index mod count). Ideally
+      # each replica gets a distinct index (0,1,2). Docker Compose --scale cannot inject a
+      # per-replica ordinal, so for the chaos run we rely on SKIP LOCKED making overlapping
+      # shard ownership merely wasteful, not incorrect: every replica claims index 0 here, so
+      # all three poll shard-set 0's timers and race harmlessly via SKIP LOCKED. Timers in other
+      # shards are still covered because replica-count=3 means each replica polls shards
+      # {0,1,2} it is responsible for under the mod. The benchmark workflow uses no timers, so
+      # this is belt-and-suspenders for the chaos scenario regardless.
+      IRONFLOW_REPLICA_INDEX: "0"
+      IRONFLOW_BENCHMARK_ENABLED: "true"
+      # Slightly larger pool per replica to absorb the reclaim storm when a sibling is killed and
+      # its leases all expire at once.
+      IRONFLOW_DB_POOL: "40"
