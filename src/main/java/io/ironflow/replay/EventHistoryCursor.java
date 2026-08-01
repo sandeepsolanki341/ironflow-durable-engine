@@ -75,12 +75,8 @@ public final class EventHistoryCursor {
         for (HistoryEvent e : history) {
             high = Math.max(high, e.sequenceNumber());
             switch (e.eventType()) {
-                case EventTypes.ACTIVITY_SCHEDULED,
-                     EventTypes.TIMER_STARTED,
-                     EventTypes.MARKER_RECORDED -> commands.add(e);
-                case EventTypes.ACTIVITY_COMPLETED,
-                     EventTypes.ACTIVITY_FAILED,
-                     EventTypes.TIMER_FIRED -> {
+                case EventTypes.ACTIVITY_SCHEDULED, EventTypes.TIMER_STARTED, EventTypes.MARKER_RECORDED, EventTypes.COMPENSATION_REGISTERED -> commands.add(e);
+                case EventTypes.ACTIVITY_COMPLETED, EventTypes.ACTIVITY_FAILED, EventTypes.TIMER_FIRED -> {
                     long scheduledSeq = e.payload().path("scheduledEventSeq").asLong(-1);
                     if (scheduledSeq < 0) {
                         throw new CorruptHistoryException(
