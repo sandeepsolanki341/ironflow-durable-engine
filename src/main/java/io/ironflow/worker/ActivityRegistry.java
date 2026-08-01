@@ -2,11 +2,12 @@ package io.ironflow.worker;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -23,10 +24,22 @@ public class ActivityRegistry {
 
     private final Map<String, Registration> byType = new HashMap<>();
     private final ObjectMapper mapper;
+    private final ApplicationContext context;
 
-    public ActivityRegistry(List<Object> beans, ObjectMapper mapper) {
+    public ActivityRegistry(ApplicationContext context, ObjectMapper mapper) {
+        this.context = context;
         this.mapper = mapper;
-        for (Object bean : beans) {
+    }
+
+    /**
+     * Scans the application context for @Activity methods after all beans are created.
+     * This breaks the circular dependency that occurred when injecting List<Object> directly
+     * in the constructor.
+     */
+    @PostConstruct
+    public void init() {
+        Map<String, Object> beans = context.getBeansOfType(Object.class);
+        for (Object bean : beans.values()) {
             for (Method m : bean.getClass().getMethods()) {
                 Activity annotation = m.getAnnotation(Activity.class);
                 if (annotation == null) {
@@ -54,10 +67,6 @@ public class ActivityRegistry {
 
     /**
      * Invokes an activity, unwrapping reflection wrappers.
-     *
-     * <p>Unwrapping matters: {@code InvocationTargetException} would otherwise mask the
-     * user's actual exception type, and {@code ActivityOptions.nonRetryableErrors} would
-     * never match anything.</p>
      *
      * @throws Throwable the activity's own exception, unwrapped
      */

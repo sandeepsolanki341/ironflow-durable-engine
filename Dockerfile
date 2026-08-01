@@ -13,12 +13,12 @@ WORKDIR /build
 # Copy the POM first and warm the dependency cache in its own layer, so a source-only change
 # does not invalidate the (slow) dependency download.
 COPY pom.xml .
-RUN --mount=type=cache,target=/root/.m2 mvn -q -e -DskipTests dependency:go-offline
+RUN --mount=type=cache,target=/root/.m2 mvn -q -e -Dmaven.test.skip=true dependency:go-offline
 
 COPY src ./src
 # repackage produces the Spring Boot executable fat jar. Tests are skipped in the image build;
 # they run in CI, not on every image assembly.
-RUN --mount=type=cache,target=/root/.m2 mvn -q -e -DskipTests clean package \
+RUN --mount=type=cache,target=/root/.m2 mvn -q -e -Dmaven.test.skip=true clean package \
     && cp target/*.jar /build/app.jar
 
 # ---- Runtime stage --------------------------------------------------------------------------
