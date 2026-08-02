@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.jooq.exception.DataAccessException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -167,14 +168,14 @@ public class WorkflowService {
         String fingerprint = IdempotencyFingerprint.of(request.workflowType(), input);
         UUID executionId = UUID.randomUUID();
 
-        try {
+                try {
             dsl.execute(INSERT_EXECUTION_SQL,
                     executionId, request.workflowType(), request.businessKey(),
                     inputBytes, fingerprint,
                     // next_sequence starts at 1; WORKFLOW_STARTED consumes it, so the row
                     // is created already advanced to 2.
                     STARTED_SEQ + 1);
-        } catch (DuplicateKeyException e) {
+        } catch (DuplicateKeyException | DataAccessException e) {
             return resolveExistingStart(request, fingerprint, e);
         }
 
@@ -246,9 +247,9 @@ public class WorkflowService {
      *         broken random source, most likely - and must not be silently reported to the
      *         caller as "already existed".
      */
-    private StartWorkflowResponse resolveExistingStart(StartWorkflowRequest request,
-                                                       String fingerprint,
-                                                       DuplicateKeyException cause) {
+     private StartWorkflowResponse resolveExistingStart(StartWorkflowRequest request,
+                                                      String fingerprint,
+                                                      Throwable cause) {
         if (request.businessKey() == null) {
             throw new IllegalStateException(
                     "Duplicate key violation with no business key set", cause);

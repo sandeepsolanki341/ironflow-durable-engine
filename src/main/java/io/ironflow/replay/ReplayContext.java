@@ -247,7 +247,7 @@ public final class ReplayContext implements WorkflowContext {
     // Timers.
     // ---------------------------------------------------------------------------------
 
-    /**
+        /**
      * Durable sleep.
      *
      * <h3>Why fire_at is computed here, not at dispatch</h3>
@@ -256,14 +256,8 @@ public final class ReplayContext implements WorkflowContext {
      * marker - and recorded in the {@code TIMER_STARTED} event. It is NOT computed as
      * {@code now() + duration} when the row is written.</p>
      *
-     * <p>The difference matters when a decision task is retried. If the deadline were
-     * derived at write time, a decision that failed and retried thirty seconds later would
-     * produce a timer thirty seconds further out - so a workflow's wake time would depend
-     * on how many times its decision task happened to retry. Anchoring to the replayed
-     * marker makes the deadline a deterministic function of history.</p>
-     *
      * @param duration non-positive durations return immediately, matching
-     *                 {@code Thread.sleep} semantics and avoiding a pointless round trip
+     * {@code Thread.sleep} semantics and avoiding a pointless round trip
      */
     @Override
     public void sleep(Duration duration) {
@@ -273,11 +267,15 @@ public final class ReplayContext implements WorkflowContext {
             return;
         }
 
+        // We MUST call now() unconditionally. 
+        // On first run: it records the __now marker which precedes the timer.
+        // On replay: it consumes that __now marker so the cursor stays aligned.
+        Instant fireAt = now();
+
         Optional<HistoryEvent> started =
                 cursor.nextCommand(EventTypes.TIMER_STARTED, TIMER_IDENTITY);
 
         if (started.isEmpty()) {
-            Instant fireAt = now().plus(duration);
             long seq = nextProvisionalSeq++;
             commands.add(new Command.StartTimer(seq, duration, fireAt));
             blockForever();

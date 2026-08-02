@@ -61,9 +61,9 @@ public class ActivityCompletionCommitter {
         }
         long expectedVersion = versionRow.get(0, Long.class);
 
-        try {
+                try {
             ActivityCompletionResult applied = orchestrator.applyActivityCompletion(
-                    task.executionId(), task.taskUuid(), result, expectedVersion);
+                    task.executionId(), task.taskUuid(), task.scheduledEventSeq(), result, expectedVersion);
 
             if (log.isDebugEnabled()) {
                 log.debug("Activity '{}' completed for execution {} at seq {}",

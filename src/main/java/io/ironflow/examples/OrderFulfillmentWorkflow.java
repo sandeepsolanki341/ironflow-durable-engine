@@ -4,7 +4,10 @@ import io.ironflow.sdk.ActivityOptions;
 import io.ironflow.sdk.Workflow;
 import io.ironflow.sdk.WorkflowContext;
 
+
 import java.time.Duration;
+
+import org.springframework.stereotype.Component;
 
 /**
  * The flagship demonstration workflow: an e-commerce order fulfillment saga that exercises
@@ -52,6 +55,7 @@ import java.time.Duration;
  * it was before - including, if a failure already occurred, resuming a half-finished
  * rollback rather than restarting it.</p>
  */
+@Component
 public final class OrderFulfillmentWorkflow
         implements Workflow<OrderInput, OrderResult> {
 
@@ -67,7 +71,7 @@ public final class OrderFulfillmentWorkflow
             .withTimeout(Duration.ofSeconds(30));
 
     /** How long to wait after purchase before soliciting a product review. */
-    private static final Duration REVIEW_DELAY = Duration.ofDays(3);
+    private static final Duration REVIEW_DELAY = Duration.ofSeconds(3);
 
     @Override
     public String type() {
